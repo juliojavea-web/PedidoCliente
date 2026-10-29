@@ -21,6 +21,11 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".ClientesActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+
         <!-- Permite compartir el .docx generado con Gmail como adjunto -->
         <provider
             android:name="androidx.core.content.FileProvider"

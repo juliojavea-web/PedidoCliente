@@ -11,20 +11,18 @@ import java.util.zip.ZipOutputStream
  */
 object DocxBuilder {
 
-    /** Número total de filas de la tabla (las no usadas quedan vacías). */
-    const val ROWS = 20
-
     data class Linea(val articulo: String, val cantidad: String, val unidad: String)
 
     data class Pedido(
         val cliente: String,
+        val direccion: String,
         val codigoCliente: String,
         val fechaEntrega: String,
+        val enlaceGmail: String,
         val lineas: List<Linea>
     )
 
     private val ANCHOS = intArrayOf(5400, 1800, 1800) // suma 9000 (A4 con márgenes de 2,54 cm)
-    private const val BORDE = "<w:%s w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"808080\"/>"
 
     fun write(file: File, pedido: Pedido) {
         ZipOutputStream(FileOutputStream(file).buffered()).use { zip ->
@@ -32,7 +30,7 @@ object DocxBuilder {
             entrada(zip, "_rels/.rels", RELS)
             entrada(zip, "word/document.xml", documento(pedido))
             entrada(zip, "word/styles.xml", ESTILOS)
-            entrada(zip, "word/_rels/document.xml.rels", DOC_RELS)
+            entrada(zip, "word/_rels/document.xml.rels", docRels(pedido.enlaceGmail))
         }
     }
 
@@ -65,9 +63,8 @@ object DocxBuilder {
         parrafo(run("$etiqueta ", negrita = true, tamano = 24) + run(valor, tamano = 24), despues = 120)
 
     private fun celda(ancho: Int, texto: String, cabecera: Boolean, centrado: Boolean): String {
-        val sombra = if (cabecera) "<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"D9D9D9\"/>" else ""
         val runs = if (texto.isEmpty()) "" else run(texto, negrita = cabecera)
-        return "<w:tc><w:tcPr><w:tcW w:w=\"$ancho\" w:type=\"dxa\"/>$sombra</w:tcPr>" +
+        return "<w:tc><w:tcPr><w:tcW w:w=\"$ancho\" w:type=\"dxa\"/></w:tcPr>" +
             parrafo(runs, centrado = centrado) + "</w:tc>"
     }
 
@@ -81,40 +78,46 @@ object DocxBuilder {
 
     private fun tabla(lineas: List<Linea>): String {
         val sb = StringBuilder()
-        sb.append("<w:tbl><w:tblPr><w:tblW w:w=\"${ANCHOS.sum()}\" w:type=\"dxa\"/><w:tblBorders>")
-        for (lado in listOf("top", "left", "bottom", "right", "insideH", "insideV")) {
-            sb.append(BORDE.format(lado))
-        }
-        sb.append("</w:tblBorders><w:tblLayout w:type=\"fixed\"/><w:tblCellMar>")
+        // Sin bordes: las líneas del pedido no llevan recuadro
+        sb.append("<w:tbl><w:tblPr><w:tblW w:w=\"${ANCHOS.sum()}\" w:type=\"dxa\"/><w:tblLayout w:type=\"fixed\"/><w:tblCellMar>")
         sb.append("<w:top w:w=\"80\" w:type=\"dxa\"/><w:left w:w=\"120\" w:type=\"dxa\"/>")
         sb.append("<w:bottom w:w=\"80\" w:type=\"dxa\"/><w:right w:w=\"120\" w:type=\"dxa\"/>")
         sb.append("</w:tblCellMar></w:tblPr><w:tblGrid>")
         ANCHOS.forEach { sb.append("<w:gridCol w:w=\"$it\"/>") }
         sb.append("</w:tblGrid>")
         sb.append(fila(listOf("Artículo", "Cantidad", "Unidad"), cabecera = true))
-        for (i in 0 until ROWS) {
-            val l = lineas.getOrNull(i)
-            sb.append(fila(listOf(l?.articulo ?: "", l?.cantidad ?: "", l?.unidad ?: "")))
+        // Solo las filas rellenadas
+        for (l in lineas) {
+            sb.append(fila(listOf(l.articulo, l.cantidad, l.unidad)))
         }
         sb.append("</w:tbl>")
         return sb.toString()
     }
 
+    /** Enlace directo a Gmail, justo después de la última línea rellenada. */
+    private fun parrafoEnlace(): String =
+        "<w:p><w:pPr><w:spacing w:before=\"120\" w:after=\"0\"/></w:pPr>" +
+            run("Enviar por Email: ", negrita = true, tamano = 24) +
+            "<w:hyperlink r:id=\"rId2\" w:history=\"1\"><w:r><w:rPr><w:color w:val=\"0563C1\"/>" +
+            "<w:sz w:val=\"24\"/><w:u w:val=\"single\"/></w:rPr><w:t>Abrir en Gmail</w:t></w:r></w:hyperlink></w:p>"
+
     private fun documento(p: Pedido): String {
         val cuerpo = parrafo(run("PEDIDO", negrita = true, tamano = 40), despues = 360, centrado = true) +
             campo("Cliente:", p.cliente) +
+            campo("Dirección:", p.direccion) +
             campo("Código de cliente:", p.codigoCliente) +
             campo("Fecha de entrega:", p.fechaEntrega) +
             parrafo("", despues = 200) +
             tabla(p.lineas) +
-            "<w:p/>" // Word exige un párrafo después de la tabla
-        return XML + "<w:document xmlns:w=\"$NS\"><w:body>$cuerpo" +
+            parrafoEnlace() // Word exige un párrafo después de la tabla: es el del enlace
+        return XML + "<w:document xmlns:w=\"$NS\" xmlns:r=\"$NS_REL\"><w:body>$cuerpo" +
             "<w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/>" +
             "<w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" " +
             "w:header=\"708\" w:footer=\"708\" w:gutter=\"0\"/></w:sectPr></w:body></w:document>"
     }
 
     private const val NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    private const val NS_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
     private const val XML = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
 
     private const val CONTENT_TYPES = XML +
@@ -130,9 +133,10 @@ object DocxBuilder {
         "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/>" +
         "</Relationships>"
 
-    private const val DOC_RELS = XML +
+    private fun docRels(enlace: String): String = XML +
         "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
-        "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>" +
+        "<Relationship Id=\"rId1\" Type=\"$NS_REL/styles\" Target=\"styles.xml\"/>" +
+        "<Relationship Id=\"rId2\" Type=\"$NS_REL/hyperlink\" Target=\"${esc(enlace)}\" TargetMode=\"External\"/>" +
         "</Relationships>"
 
     private const val ESTILOS = XML +
