@@ -61,14 +61,13 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="8dp"
-            android:hint="Código de cliente (4 dígitos)">
+            android:hint="Código de cliente">
 
             <com.google.android.material.textfield.TextInputEditText
                 android:id="@+id/etCodigo"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:inputType="number"
-                android:maxLength="4" />
+                android:inputType="text" />
         </com.google.android.material.textfield.TextInputLayout>
 
         <com.google.android.material.textfield.TextInputLayout

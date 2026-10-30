@@ -33,7 +33,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var contenedor: LinearLayout
 
     private val filas = mutableListOf<Fila>()
-    private var rellenando = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,18 +51,11 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btnClientes).setOnClickListener {
             startActivity(Intent(this, ClientesActivity::class.java))
         }
-        // Al escribir un código de 4 dígitos que existe, se rellenan Cliente y Dirección
-        etCodigo.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: Editable?) { rellenarDesdeCodigo() }
-        })
-        // Al escribir el nombre (con sugerencias) de un cliente guardado, se rellenan Dirección y Código
-        etCliente.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: Editable?) { rellenarDesdeNombre() }
-        })
+        // Al salir del campo (o elegir una sugerencia), si coincide con clientes guardados se rellena el resto;
+        // si hay varios (mismo nombre o código) se elige por la dirección
+        etCliente.setOnFocusChangeListener { _, tieneFoco -> if (!tieneFoco) rellenarDesde(true) }
+        etCodigo.setOnFocusChangeListener { _, tieneFoco -> if (!tieneFoco) rellenarDesde(false) }
+        (etCliente as android.widget.AutoCompleteTextView).setOnItemClickListener { _, _, _, _ -> rellenarDesde(true) }
         findViewById<Button>(R.id.btnSend).setOnClickListener { crearYAbrirGmail() }
         findViewById<Button>(R.id.btnClear).setOnClickListener { limpiar() }
     }
@@ -71,36 +63,35 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         actualizarSugerencias()
-        // Por si se ha modificado el cliente en la pantalla de Clientes
-        rellenarDesdeCodigo()
     }
 
     private fun actualizarSugerencias() {
-        val nombres = ClienteStore.todos(this).map { it.nombre }
+        val nombres = ClienteStore.todos(this).map { it.nombre }.distinctBy { it.lowercase() }
         (etCliente as android.widget.AutoCompleteTextView)
             .setAdapter(ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, nombres))
     }
 
-    private fun rellenarDesdeCodigo() {
-        if (rellenando) return
-        val codigo = etCodigo.text.toString().trim()
-        if (!ClienteStore.codigoValido(codigo)) return
-        val c = ClienteStore.buscar(this, codigo) ?: return
-        rellenando = true
-        if (etCliente.text.toString() != c.nombre) etCliente.setText(c.nombre)
-        if (etDireccion.text.toString() != c.direccion) etDireccion.setText(c.direccion)
-        rellenando = false
+    private fun aplicarCliente(c: ClienteStore.Cliente) {
+        etCliente.setText(c.nombre)
+        etDireccion.setText(c.direccion)
+        etCodigo.setText(c.codigo)
     }
 
-    private fun rellenarDesdeNombre() {
-        if (rellenando) return
-        val nombre = etCliente.text.toString().trim()
-        if (nombre.isEmpty()) return
-        val c = ClienteStore.todos(this).firstOrNull { it.nombre.equals(nombre, ignoreCase = true) } ?: return
-        rellenando = true
-        if (etDireccion.text.toString() != c.direccion) etDireccion.setText(c.direccion)
-        if (etCodigo.text.toString() != c.codigo) etCodigo.setText(c.codigo)
-        rellenando = false
+    private fun rellenarDesde(porNombre: Boolean) {
+        val texto = (if (porNombre) etCliente else etCodigo).text.toString().trim()
+        if (texto.isEmpty()) return
+        val m = if (porNombre) ClienteStore.porNombre(this, texto) else ClienteStore.porCodigo(this, texto)
+        when {
+            m.isEmpty() -> return
+            m.size == 1 -> aplicarCliente(m[0])
+            else -> androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("Elige el cliente")
+                .setItems(m.map { "${it.codigo} - ${it.nombre} - ${it.direccion}" }.toTypedArray()) { _, i ->
+                    aplicarCliente(m[i])
+                }
+                .setNegativeButton("Cancelar", null)
+                .show()
+        }
     }
 
     /** Añade una fila vacía al final y la vigila: cuando se rellena, añade la siguiente. */
@@ -151,8 +142,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         val codigo = etCodigo.text.toString().trim()
-        if (!Regex("^[0-9]{4}$").matches(codigo)) {
-            etCodigo.error = "El código de cliente debe tener 4 dígitos"
+        if (codigo.isEmpty()) {
+            etCodigo.error = "Indica el código de cliente"
             etCodigo.requestFocus()
             return
         }
